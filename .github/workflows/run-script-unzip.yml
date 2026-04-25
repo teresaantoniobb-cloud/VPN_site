@@ -1,0 +1,72 @@
+name: Run script and unzip files (manual)
+
+on:
+  workflow_dispatch:  # executa manualmente pela UI
+
+permissions:
+  contents: write
+
+jobs:
+  run-and-unzip:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Show repo info
+        run: |
+          echo "Running on branch: $GITHUB_REF"
+          ls -la
+
+      - name: Make script executable if present
+        run: |
+          if [ -f "scripts/unzip-and-run.sh" ]; then
+            chmod +x scripts/unzip-and-run.sh
+            echo "Script made executable"
+          else
+            echo "No script at scripts/unzip-and-run.sh"
+          fi
+
+      - name: Run repository script (if present)
+        run: |
+          if [ -f "scripts/unzip-and-run.sh" ]; then
+            ./scripts/unzip-and-run.sh
+          else
+            echo "Pulando execução do script — arquivo não encontrado"
+          fi
+
+      - name: Find and unzip .zip files (root and subdirs)
+        run: |
+          set -e
+          mkdir -p extracted
+          found=0
+          # Procura por .zip (ignora node_modules/.git etc.)
+          while IFS= read -r -d $'\0' z; do
+            found=1
+            echo "Unzipping: $z"
+            # extrai preservando caminhos relativos, para pasta extracted/
+            unzip -o "$z" -d extracted/ || { echo "Falha ao descompactar $z"; exit 1; }
+          done < <(find . -type f -name "*.zip" -not -path "./.git/*" -print0)
+          if [ "$found" -eq 0 ]; then
+            echo "Nenhum arquivo .zip encontrado."
+          else
+            echo "Conteúdo extraído em ./extracted"
+            ls -la extracted | sed -n '1,200p'
+          fi
+
+      - name: Commit & push extracted files (se houver mudanças)
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add extracted || true
+          if git diff --staged --quiet; then
+            echo "Sem mudanças para commitar"
+          else
+            git commit -m "Add extracted contents from zip files (via workflow)"
+            git push origin HEAD:$GITHUB_REF_NAME
+          fi
